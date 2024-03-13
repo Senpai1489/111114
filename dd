@@ -1,0 +1,81 @@
+from datetime import timedelta, datetime
+from dateutil import parser
+import requests
+import feedparser
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO)
+
+BOT_TOKEN = '6819063772:AAHlSda2Po-iClc76Ne1YrXrS7q2vOmRWr8'
+CHANNEL_ID = '@adadadadttyyty'
+FEED_URL = 'https://48.mchs.gov.ru/deyatelnost/press-centr/operativnaya-informaciya/shtormovye-i-ekstrennye-preduprezhdeniya/rss'
+IMAGE_URL = 'https://t.me/c/2144090831/15'  # Замените на URL вашей картинки
+
+def send_message(message, image_url):
+    try:
+        # Отправляем сообщение с прикрепленным изображением
+        message_response = requests.post(f'https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto', json={
+            'chat_id': CHANNEL_ID,
+            'photo': image_url,
+            'caption': message,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        })
+
+        if message_response.status_code != 200:
+            logging.error(f"Ошибка при отправке сообщения: {message_response.text}")
+    except Exception as e:
+        logging.error(f"Ошибка при отправке сообщения: {e}")
+
+def load_published_entries():
+    try:
+        with open("published_entries.txt", "r") as file:
+            published_entries = file.read().splitlines()
+        return published_entries
+    except FileNotFoundError:
+        return []
+
+def save_published_entry(entry_link):
+    with open("published_entries.txt", "a") as file:
+        file.write(entry_link + "\n")
+
+def main():
+    try:
+        rss_feed = feedparser.parse(FEED_URL)
+        if rss_feed.bozo:
+            logging.error("Ошибка при загрузке RSS-ленты: не удалось разобрать XML")
+            return
+
+        published_entries = load_published_entries()
+
+        for entry in rss_feed.entries:
+            if entry.link not in published_entries:
+                try:
+                    parsed_date = parser.parse(entry.published)
+                except ValueError:
+                    logging.error(f"Ошибка при разборе даты: {entry.published}")
+                    continue
+
+                # Преобразуем parsed_date в offset-naive datetime
+                parsed_date = parsed_date.replace(tzinfo=None)
+
+                # Определяем текущую дату и вычитаем из неё 24 часа
+                current_date = datetime.utcnow() - timedelta(hours=8)
+                day_ago = current_date - timedelta(days=1)
+
+                # Проверяем, была ли новость опубликована в течение последних 24 часов
+                if parsed_date >= day_ago:
+                    message = f"<a href='{entry.link}'>{entry.title}</a>\n\n{entry.summary}"  # Заголовок, ссылка и текст статьи
+                    send_message(message, IMAGE_URL)
+                    logging.info(f"Сообщение отправлено: {entry.title}")
+
+                    # Сохраняем информацию о новой опубликованной записи
+                    save_published_entry(entry.link)
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке RSS-ленты или отправке сообщений: {e}")
+
+if __name__ == "__main__":
+    while True:
+        main()
+        time.sleep(1)  # Ожидаем одну секунду перед повторным мониторингом новостей
